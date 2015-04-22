@@ -100,7 +100,7 @@ fn execute(program: &[u8],
             },
 
             Inst::Halt => {
-                return Ok(stack_idx);
+                break;
             },
 
             Inst::Jump => {
@@ -123,6 +123,7 @@ fn main() {
         Inst::Add as u8,
         Inst::Dup as u8,
         Inst::Print as u8,
+        Inst::Halt as u8,
         Inst::Jump as u8, -10i8 as u8,
     ];
     execute(program, &mut [0; 256], 0).unwrap();
