@@ -19,8 +19,9 @@ enum Inst {
     Add   = 5,
     Print = 6,
     Halt  = 7,
+    Jump  = 8,
 }
-const MAX_INST_VARIANT: u8 = 7;
+const MAX_INST_VARIANT: u8 = 8;
 
 impl Inst {
     fn from_u8(x: u8) -> Option<Self> {
@@ -101,9 +102,15 @@ fn execute(program: &[u8],
             Inst::Halt => {
                 return Ok(stack_idx);
             },
+
+            Inst::Jump => {
+                let delta = try!(opcodes.read_i8().or(Err(UnexpectedProgramEnd)));
+                let addr = (opcodes.position() as i64 + delta as i64) as u64;
+                opcodes.set_position(addr);
+            },
         }
 
-        println!("{:?}", &stack[..stack_idx]);
+        //println!("{:?}", &stack[..stack_idx]);
     }
 
     Ok(stack_idx)
@@ -114,7 +121,9 @@ fn main() {
         Inst::Push as u8, 1, 0, 0, 0,
         Inst::Push as u8, 2, 0, 0, 0,
         Inst::Add as u8,
+        Inst::Dup as u8,
         Inst::Print as u8,
+        Inst::Jump as u8, -10i8 as u8,
     ];
     execute(program, &mut [0; 256], 0).unwrap();
 }
