@@ -1,6 +1,6 @@
 extern crate byteorder;
 use std::io::Cursor;
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 // Bytecode instruction opcodes. The values of these opcodes should never
 // change, to remain compatible with existing bytecode programs.
@@ -26,10 +26,18 @@ const MAX_INST_VARIANT: u8 = 8;
 impl Inst {
     fn from_u8(x: u8) -> Option<Self> {
         if x <= MAX_INST_VARIANT {
-            // This is safe as long as MAX_INST_VARIANT
+            // This is safe as long as MAX_INST_VARIANT is correct and all the valid enum values
+            // are contiguous.
             Some(unsafe { std::mem::transmute::<u8, Self>(x) })
         } else {
             None
+        }
+    }
+
+    fn num_operands(&self) -> u8 {
+        match *self {
+            Inst::Push | Inst::Jump => 1,
+            _ => 0,
         }
     }
 }
@@ -104,8 +112,9 @@ fn execute(program: &[u8],
             },
 
             Inst::Jump => {
-                let delta = try!(opcodes.read_i8().or(Err(UnexpectedProgramEnd)));
-                let addr = (opcodes.position() as i64 + delta as i64) as u64;
+                let delta = try!(opcodes.read_i32::<LittleEndian>().or(Err(UnexpectedProgramEnd)));
+                let operand_size = std::mem::size_of::<i32>() as i64;
+                let addr = (opcodes.position() as i64 + delta as i64 - operand_size) as u64;
                 opcodes.set_position(addr);
             },
         }
@@ -116,15 +125,98 @@ fn execute(program: &[u8],
     Ok(stack_idx)
 }
 
+fn parse_instruction(inst: &str) -> Option<Inst> {
+    match inst {
+        "nop"   => Some(Inst::Nop),
+        "push"  => Some(Inst::Push),
+        "dup"   => Some(Inst::Dup),
+        "pop"   => Some(Inst::Pop),
+        "swap"  => Some(Inst::Swap),
+        "add"   => Some(Inst::Add),
+        "print" => Some(Inst::Print),
+        "halt"  => Some(Inst::Halt),
+        "jump"  => Some(Inst::Jump),
+        _       => None
+    }
+}
+
+fn assemble(source: &str) -> Vec<u8> {
+    use std::collections::HashMap;
+
+    let mut program: Vec<u8> = Vec::new();
+    let mut label_definitions: HashMap<&str, usize> = HashMap::new();
+    let mut label_uses: Vec<(&str, usize)> = Vec::new();
+
+    for line in source.lines() {
+        let mut tokens = line.split(char::is_whitespace).filter(|s| !s.is_empty());
+        let mut first_token = tokens.next();
+
+        // Parse an optional label at the start of the line.
+        if let Some(label) = first_token {
+            if label.chars().next_back() == Some(':') {
+                let label_name = &label[..label.len() - 1];
+                if label_definitions.insert(label_name, program.len()).is_some() {
+                    panic!("Attempted to redefine label '{}'", label_name);
+                }
+                first_token = tokens.next()
+            }
+        }
+
+        // Parse the rest of the line if it's not blank.
+        if let Some(opcode) = first_token {
+            // Parse the instruction name.
+            let inst = parse_instruction(opcode).unwrap_or_else(|| {
+                panic!("Unrecognized instruction '{}'", opcode)
+            });
+            program.push(inst as u8);
+
+            // Parse the operands.
+            for _ in 0..inst.num_operands() {
+                let operand = tokens.next().unwrap_or_else(|| {
+                    panic!("Missing one or more operands after '{}'", opcode)
+                });
+
+                if operand.chars().next() == Some('@') {
+                    let label_name = &operand[1..];
+                    label_uses.push((label_name, program.len()));
+
+                    // Push four zero bytes to be overwritten by the label location later.
+                    for _ in 0..4 { program.push(0); }
+                } else if let Ok(number) = operand.parse::<i32>() {
+                    let operand_index = program.len();
+                    for _ in 0..4 { program.push(0); }
+                    (&mut program[operand_index..]).write_i32::<LittleEndian>(number).unwrap();
+                } else {
+                    panic!("Expected label or valid 32-bit signed integer after '{}', not '{}'",
+                          opcode, operand);
+                }
+            }
+        }
+    }
+
+    // Resolve label references and fill in their values in the bytecode.
+    for (label_name, use_index) in label_uses {
+        let target_index = *label_definitions.get(label_name).unwrap_or_else(|| {
+            panic!("Reference to undefined label '{}'", label_name);
+        });
+        let delta = target_index as i32 - use_index as i32;
+        (&mut program[use_index..]).write_i32::<LittleEndian>(delta).unwrap();
+    }
+
+    program
+}
+
 fn main() {
-    let program = &[
-        Inst::Push as u8, 1, 0, 0, 0,
-        Inst::Push as u8, 2, 0, 0, 0,
-        Inst::Add as u8,
-        Inst::Dup as u8,
-        Inst::Print as u8,
-        Inst::Halt as u8,
-        Inst::Jump as u8, -10i8 as u8,
-    ];
-    execute(program, &mut [0; 256], 0).unwrap();
+    let source = r"
+        push 1
+        label: push 2
+        add
+        dup
+        print
+        jump @label
+    ";
+
+    let program = assemble(source);
+
+    execute(&program, &mut [0; 256], 0).unwrap();
 }
