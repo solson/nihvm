@@ -2,50 +2,56 @@ extern crate byteorder;
 use std::io::Cursor;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-// Bytecode instruction opcodes. The values of these opcodes should never
-// change, to remain compatible with existing bytecode programs.
-//
-// To make the from_u8 function work, MAX_INST_VARIANT must be kept in sync with
-// this enum and every value from 0 to MAX_INST_VARIANT should be assigned to an
-// opcode.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-enum Inst {
-    Nop   = 0,
-    Push  = 1,
-    Dup   = 2,
-    Pop   = 3,
-    Swap  = 4,
-    Add   = 5,
-    Print = 6,
-    Halt  = 7,
-    Jump  = 8,
+macro_rules! define_instructions {
+    ($($variant:ident, $value:expr, $name:expr, $num_operands:expr;)*) => (
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[repr(u8)]
+        enum Inst {
+            $($variant = $value),*
+        }
+
+        impl Inst {
+            fn from_u8(inst: u8) -> Option<Inst> {
+                match inst {
+                    $($value => Some(Inst::$variant),)*
+                    _ => None
+                }
+            }
+
+            fn from_str(inst: &str) -> Option<Inst> {
+                match inst {
+                    $($name => Some(Inst::$variant),)*
+                    _ => None
+                }
+            }
+
+            fn num_operands(&self) -> u8 {
+                match *self {
+                    $(Inst::$variant => $num_operands),*
+                }
+            }
+        }
+    )
 }
-const MAX_INST_VARIANT: u8 = 8;
 
-impl Inst {
-    fn from_u8(x: u8) -> Option<Self> {
-        if x <= MAX_INST_VARIANT {
-            // This is safe as long as MAX_INST_VARIANT is correct and all the valid enum values
-            // are contiguous.
-            Some(unsafe { std::mem::transmute::<u8, Self>(x) })
-        } else {
-            None
-        }
-    }
-
-    fn num_operands(&self) -> u8 {
-        match *self {
-            Inst::Push | Inst::Jump => 1,
-            _ => 0,
-        }
-    }
+// Bytecode instruction opcodes. The values of these opcodes should never change, to remain
+// compatible with existing bytecode programs.
+define_instructions! {
+    Nop,   0, "nop",   0;
+    Push,  1, "push",  1;
+    Dup,   2, "dup",   0;
+    Pop,   3, "pop",   0;
+    Swap,  4, "swap",  0;
+    Add,   5, "add",   0;
+    Print, 6, "print", 0;
+    Halt,  7, "halt",  0;
+    Jump,  8, "jump",  1;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum VmError {
     InvalidOpcode,
-    UnexpectedProgramEnd, // Hit end of program while reading opcode argument.
+    UnexpectedProgramEnd, // Hit end of program while reading operand.
     StackOverflow,
     StackUnderflow,
 }
@@ -118,26 +124,9 @@ fn execute(program: &[u8],
                 opcodes.set_position(addr);
             },
         }
-
-        //println!("{:?}", &stack[..stack_idx]);
     }
 
     Ok(stack_idx)
-}
-
-fn parse_instruction(inst: &str) -> Option<Inst> {
-    match inst {
-        "nop"   => Some(Inst::Nop),
-        "push"  => Some(Inst::Push),
-        "dup"   => Some(Inst::Dup),
-        "pop"   => Some(Inst::Pop),
-        "swap"  => Some(Inst::Swap),
-        "add"   => Some(Inst::Add),
-        "print" => Some(Inst::Print),
-        "halt"  => Some(Inst::Halt),
-        "jump"  => Some(Inst::Jump),
-        _       => None
-    }
 }
 
 fn assemble(source: &str) -> Vec<u8> {
@@ -165,7 +154,7 @@ fn assemble(source: &str) -> Vec<u8> {
         // Parse the rest of the line if it's not blank.
         if let Some(opcode) = first_token {
             // Parse the instruction name.
-            let inst = parse_instruction(opcode).unwrap_or_else(|| {
+            let inst = Inst::from_str(opcode).unwrap_or_else(|| {
                 panic!("Unrecognized instruction '{}'", opcode)
             });
             program.push(inst as u8);
