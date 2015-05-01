@@ -225,25 +225,25 @@ impl Vm {
                 Inst::Jz => {
                     if stack_idx < 1 { return Err(StackUnderflow); }
                     let condition = unsafe { *stack.get_unchecked(stack_idx - 1) };
-                    if condition == 0 { try!(jump(&mut opcodes)); }
+                    try!(jump(&mut opcodes, condition == 0));
                     stack_idx -= 1;
                 },
 
                 Inst::Jnz => {
                     if stack_idx < 1 { return Err(StackUnderflow); }
                     let condition = unsafe { *stack.get_unchecked(stack_idx - 1) };
-                    if condition != 0 { try!(jump(&mut opcodes)); }
+                    try!(jump(&mut opcodes, condition != 0));
                     stack_idx -= 1;
                 },
 
                 Inst::Jump => {
-                    try!(jump(&mut opcodes));
+                    try!(jump(&mut opcodes, true));
                 },
 
                 Inst::Call => {
                     let control_stack_top = try!(self.control_stack.get_mut(self.control_stack_idx).ok_or(ControlStackOverflow));
                     *control_stack_top = opcodes.position() as i32 + 4;
-                    try!(jump(&mut opcodes));
+                    try!(jump(&mut opcodes, true));
                     self.control_stack_idx += 1;
                 },
 
@@ -255,11 +255,14 @@ impl Vm {
             }
         }
 
-        fn jump(opcodes: &mut Cursor<&[u8]>) -> Result<(), VmError> {
+        #[inline(always)]
+        fn jump(opcodes: &mut Cursor<&[u8]>, condition: bool) -> Result<(), VmError> {
             let delta = try!(opcodes.read_i32::<LittleEndian>().or(Err(UnexpectedProgramEnd)));
-            let operand_size = std::mem::size_of::<i32>() as i64;
-            let addr = (opcodes.position() as i64 + delta as i64 - operand_size) as u64;
-            opcodes.set_position(addr);
+            if condition {
+                let operand_size = std::mem::size_of::<i32>() as i64;
+                let addr = (opcodes.position() as i64 + delta as i64 - operand_size) as u64;
+                opcodes.set_position(addr);
+            }
             Ok(())
         }
 
