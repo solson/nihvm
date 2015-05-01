@@ -59,6 +59,9 @@ define_instructions! {
     Jump,  19, "jump",  1;
     Call,  20, "call",  1;
     Ret,   21, "ret",   0;
+    CPush, 22, "cpush", 0;
+    CPop,  23, "cpop",  0;
+    CDup,  24, "cdup",  0;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -252,6 +255,35 @@ impl Vm {
                     opcodes.set_position(addr as u64);
                     self.control_stack_idx -= 1;
                 },
+
+                Inst::CPush => {
+                    if stack_idx < 1 { return Err(StackUnderflow); }
+                    if self.control_stack_idx >= self.control_stack.len() { return Err(ControlStackOverflow); }
+                    unsafe {
+                        *self.control_stack.get_unchecked_mut(self.control_stack_idx) = *stack.get_unchecked(stack_idx - 1);
+                    }
+                    self.control_stack_idx += 1;
+                    stack_idx -= 1;
+                },
+
+                Inst::CPop => {
+                    if self.control_stack_idx < 1 { return Err(ControlStackUnderflow); }
+                    if stack_idx >= stack.len() { return Err(StackOverflow); }
+                    unsafe {
+                        *stack.get_unchecked_mut(stack_idx) = *self.control_stack.get_unchecked(self.control_stack_idx - 1);
+                    }
+                    self.control_stack_idx -= 1;
+                    stack_idx += 1;
+                },
+
+                Inst::CDup => {
+                    if self.control_stack_idx < 1 { return Err(ControlStackUnderflow); }
+                    if stack_idx >= stack.len() { return Err(StackOverflow); }
+                    unsafe {
+                        *stack.get_unchecked_mut(stack_idx) = *self.control_stack.get_unchecked(self.control_stack_idx - 1);
+                    }
+                    stack_idx += 1;
+                },
             }
         }
 
@@ -338,24 +370,33 @@ fn assemble(source: &str) -> Vec<u8> {
 }
 
 fn main() {
-    let source = r"
-        push 1
-loop:   call @plus2
-        dup; print
-        jump @loop
-
-plus2:  push 2
-        add
-        ret
-    ";
-
     // let source = r"
     //     push 1
-    //     push 10
-// loop:   dup; push 0; eq; jnz @done
+// loop:   call @plus2
+    //     dup; print
     //     jump @loop
-// done:   print
+
+// plus2:  push 2
+    //     add
+    //     ret
     // ";
+
+    let source = r"
+        push 10
+        call @fact
+        print
+        halt
+
+fact:   push 1
+        swap
+loop:   dup; jz @done
+        dup; cpush
+        mul
+        cpop; push 1; sub
+        jump @loop
+done:   pop
+        ret
+    ";
 
     let program = assemble(source);
 
