@@ -3,12 +3,17 @@ use std::io::Cursor;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 macro_rules! define_instructions {
-    ($($variant:ident, $value:expr, $name:expr, $num_operands:expr;)*) => (
+    (variant, value, name, operands, stack_args, stack_effect
+     $($variant:ident,
+       $value:expr,
+       $name:expr,
+       $num_operands:expr,
+       $num_stack_args:expr,
+       $stack_effect:expr)*) => (
+
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         #[repr(u8)]
-        enum Inst {
-            $($variant = $value),*
-        }
+        enum Inst { $($variant = $value),* }
 
         impl Inst {
             fn from_u8(inst: u8) -> Option<Inst> {
@@ -25,11 +30,9 @@ macro_rules! define_instructions {
                 }
             }
 
-            fn num_operands(&self) -> u8 {
-                match *self {
-                    $(Inst::$variant => $num_operands),*
-                }
-            }
+            fn num_operands(self)   -> u8 { match self { $(Inst::$variant => $num_operands),* } }
+            fn num_stack_args(self) -> u8 { match self { $(Inst::$variant => $num_stack_args),* } }
+            fn stack_effect(self)   -> i8 { match self { $(Inst::$variant => $stack_effect),* } }
         }
     )
 }
@@ -37,31 +40,32 @@ macro_rules! define_instructions {
 // Bytecode instruction opcodes. The values of these opcodes should never change, to remain
 // compatible with existing bytecode programs.
 define_instructions! {
-    Nop,   0,  "nop",   0;
-    Print, 1,  "print", 0;
-    Halt,  2,  "halt",  0;
-    Push,  3,  "push",  1;
-    Dup,   4,  "dup",   0;
-    Pop,   5,  "pop",   0;
-    Swap,  6,  "swap",  0;
-    Add,   7,  "add",   0;
-    Sub,   8,  "sub",   0;
-    Mul,   9,  "mul",   0;
-    Div,   10, "div",   0;
-    Mod,   11, "mod",   0;
-    Eq,    12, "eq",    0;
-    Lt,    13, "lt",    0;
-    Lte,   14, "lte",   0;
-    Gt,    15, "gt",    0;
-    Gte,   16, "gte",   0;
-    Jz,    17, "jz",    1;
-    Jnz,   18, "jnz",   1;
-    Jump,  19, "jump",  1;
-    Call,  20, "call",  1;
-    Ret,   21, "ret",   0;
-    CPush, 22, "cpush", 0;
-    CPop,  23, "cpop",  0;
-    CDup,  24, "cdup",  0;
+    variant, value, name,    operands, stack_args, stack_effect
+    Nop,     0,     "nop",   0,        0,           0
+    Print,   1,     "print", 0,        1,          -1
+    Halt,    2,     "halt",  0,        0,           0
+    Push,    3,     "push",  1,        0,           1
+    Dup,     4,     "dup",   0,        1,           1
+    Pop,     5,     "pop",   0,        1,          -1
+    Swap,    6,     "swap",  0,        2,           0
+    Add,     7,     "add",   0,        2,          -1
+    Sub,     8,     "sub",   0,        2,          -1
+    Mul,     9,     "mul",   0,        2,          -1
+    Div,     10,    "div",   0,        2,          -1
+    Mod,     11,    "mod",   0,        2,          -1
+    Eq,      12,    "eq",    0,        2,          -1
+    Lt,      13,    "lt",    0,        2,          -1
+    Lte,     14,    "lte",   0,        2,          -1
+    Gt,      15,    "gt",    0,        2,          -1
+    Gte,     16,    "gte",   0,        2,          -1
+    Jz,      17,    "jz",    1,        1,          -1
+    Jnz,     18,    "jnz",   1,        1,          -1
+    Jump,    19,    "jump",  1,        0,           0
+    Call,    20,    "call",  1,        0,           0
+    Ret,     21,    "ret",   0,        0,           0
+    CPush,   22,    "cpush", 0,        1,          -1
+    CPop,    23,    "cpop",  0,        0,           1
+    CDup,    24,    "cdup",  0,        0,           1
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,13 +96,18 @@ impl Vm {
 
         while let Ok(opcode) = opcodes.read_u8() {
             let inst = try!(Inst::from_u8(opcode).ok_or(InvalidOpcode));
+
+            if stack_idx < inst.num_stack_args() as usize { return Err(StackUnderflow); }
+            if stack_idx as isize >= stack.len() as isize - inst.stack_effect() as isize {
+                return Err(StackOverflow);
+            }
+
             match inst {
                 Inst::Nop => {},
 
                 Inst::Print => {
                     let val = *try!(stack.get(stack_idx - 1).ok_or(StackUnderflow));
                     println!("{}", val);
-                    stack_idx -= 1;
                 },
 
                 Inst::Halt => {
@@ -106,137 +115,112 @@ impl Vm {
                 },
 
                 Inst::Push => {
-                    let val = try!(opcodes.read_i32::<LittleEndian>().or(Err(UnexpectedProgramEnd)));
+                    let val = try!(opcodes.read_i32::<LittleEndian>()
+                                   .or(Err(UnexpectedProgramEnd)));
                     let stack_top = try!(stack.get_mut(stack_idx).ok_or(StackOverflow));
                     *stack_top = val;
-                    stack_idx += 1;
                 },
 
                 Inst::Dup => {
-                    if stack_idx < 1 { return Err(StackUnderflow); }
-                    if stack_idx >= stack.len() { return Err(StackOverflow); }
                     unsafe {
                         *stack.get_unchecked_mut(stack_idx) = *stack.get_unchecked(stack_idx - 1);
                     }
-                    stack_idx += 1;
                 },
 
-                Inst::Pop => {
-                    if stack_idx < 1 { return Err(StackUnderflow); }
-                    stack_idx -= 1;
-                },
+                Inst::Pop => {},
 
                 Inst::Swap => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
                         let tmp = *stack.get_unchecked(stack_idx - 1);
-                        *stack.get_unchecked_mut(stack_idx - 1) = *stack.get_unchecked(stack_idx - 2);
+                        *stack.get_unchecked_mut(stack_idx - 1) =
+                            *stack.get_unchecked(stack_idx - 2);
                         *stack.get_unchecked_mut(stack_idx - 2) = tmp;
                     }
                 },
 
                 Inst::Add => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) += *stack.get_unchecked(stack_idx - 1);
+                        *stack.get_unchecked_mut(stack_idx - 2) +=
+                            *stack.get_unchecked(stack_idx - 1);
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Sub => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) -= *stack.get_unchecked(stack_idx - 1);
+                        *stack.get_unchecked_mut(stack_idx - 2) -=
+                            *stack.get_unchecked(stack_idx - 1);
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Mul => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) *= *stack.get_unchecked(stack_idx - 1);
+                        *stack.get_unchecked_mut(stack_idx - 2) *=
+                            *stack.get_unchecked(stack_idx - 1);
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Div => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) /= *stack.get_unchecked(stack_idx - 1);
+                        *stack.get_unchecked_mut(stack_idx - 2) /=
+                            *stack.get_unchecked(stack_idx - 1);
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Mod => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) %= *stack.get_unchecked(stack_idx - 1);
+                        *stack.get_unchecked_mut(stack_idx - 2) %=
+                            *stack.get_unchecked(stack_idx - 1);
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Eq => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
                         let val1 = *stack.get_unchecked_mut(stack_idx - 1);
                         let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
                         *ptr2 = (*ptr2 == val1) as i32;
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Lt => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
                         let val1 = *stack.get_unchecked_mut(stack_idx - 1);
                         let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
                         *ptr2 = (*ptr2 < val1) as i32;
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Lte => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
                         let val1 = *stack.get_unchecked_mut(stack_idx - 1);
                         let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
                         *ptr2 = (*ptr2 <= val1) as i32;
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Gt => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
                         let val1 = *stack.get_unchecked_mut(stack_idx - 1);
                         let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
                         *ptr2 = (*ptr2 > val1) as i32;
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Gte => {
-                    if stack_idx < 2 { return Err(StackUnderflow); }
                     unsafe {
                         let val1 = *stack.get_unchecked_mut(stack_idx - 1);
                         let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
                         *ptr2 = (*ptr2 >= val1) as i32;
                     }
-                    stack_idx -= 1;
                 },
 
                 Inst::Jz => {
-                    if stack_idx < 1 { return Err(StackUnderflow); }
                     let condition = unsafe { *stack.get_unchecked(stack_idx - 1) };
                     try!(jump(&mut opcodes, condition == 0));
-                    stack_idx -= 1;
                 },
 
                 Inst::Jnz => {
-                    if stack_idx < 1 { return Err(StackUnderflow); }
                     let condition = unsafe { *stack.get_unchecked(stack_idx - 1) };
                     try!(jump(&mut opcodes, condition != 0));
-                    stack_idx -= 1;
                 },
 
                 Inst::Jump => {
@@ -244,47 +228,50 @@ impl Vm {
                 },
 
                 Inst::Call => {
-                    let control_stack_top = try!(self.control_stack.get_mut(self.control_stack_idx).ok_or(ControlStackOverflow));
+                    let control_stack_top = try!(self.control_stack.get_mut(self.control_stack_idx)
+                                                 .ok_or(ControlStackOverflow));
                     *control_stack_top = opcodes.position() as i32 + 4;
                     try!(jump(&mut opcodes, true));
                     self.control_stack_idx += 1;
                 },
 
                 Inst::Ret => {
-                    let addr = *try!(self.control_stack.get_mut(self.control_stack_idx - 1).ok_or(ControlStackOverflow));
+                    let addr = *try!(self.control_stack.get_mut(self.control_stack_idx - 1)
+                                     .ok_or(ControlStackOverflow));
                     opcodes.set_position(addr as u64);
                     self.control_stack_idx -= 1;
                 },
 
                 Inst::CPush => {
-                    if stack_idx < 1 { return Err(StackUnderflow); }
-                    if self.control_stack_idx >= self.control_stack.len() { return Err(ControlStackOverflow); }
+                    if self.control_stack_idx >= self.control_stack.len() {
+                        return Err(ControlStackOverflow);
+                    }
                     unsafe {
-                        *self.control_stack.get_unchecked_mut(self.control_stack_idx) = *stack.get_unchecked(stack_idx - 1);
+                        *self.control_stack.get_unchecked_mut(self.control_stack_idx) =
+                            *stack.get_unchecked(stack_idx - 1);
                     }
                     self.control_stack_idx += 1;
-                    stack_idx -= 1;
                 },
 
                 Inst::CPop => {
                     if self.control_stack_idx < 1 { return Err(ControlStackUnderflow); }
-                    if stack_idx >= stack.len() { return Err(StackOverflow); }
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx) = *self.control_stack.get_unchecked(self.control_stack_idx - 1);
+                        *stack.get_unchecked_mut(stack_idx) =
+                            *self.control_stack.get_unchecked(self.control_stack_idx - 1);
                     }
                     self.control_stack_idx -= 1;
-                    stack_idx += 1;
                 },
 
                 Inst::CDup => {
                     if self.control_stack_idx < 1 { return Err(ControlStackUnderflow); }
-                    if stack_idx >= stack.len() { return Err(StackOverflow); }
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx) = *self.control_stack.get_unchecked(self.control_stack_idx - 1);
+                        *stack.get_unchecked_mut(stack_idx) =
+                            *self.control_stack.get_unchecked(self.control_stack_idx - 1);
                     }
-                    stack_idx += 1;
                 },
             }
+
+            stack_idx = (stack_idx as isize + inst.stack_effect() as isize) as usize;
         }
 
         #[inline(always)]
