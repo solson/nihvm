@@ -88,17 +88,26 @@ struct Vm {
 
 impl Vm {
     fn execute(&mut self, program: &[u8]) -> Result<(), VmError> {
+        #[inline(always)]
+        fn jump(opcodes: &mut Cursor<&[u8]>, condition: bool) -> Result<(), VmError> {
+            let delta = try!(opcodes.read_i32::<LittleEndian>().or(Err(UnexpectedProgramEnd)));
+            if condition {
+                let operand_size = std::mem::size_of::<i32>() as i64;
+                let addr = (opcodes.position() as i64 + delta as i64 - operand_size) as u64;
+                opcodes.set_position(addr);
+            }
+            Ok(())
+        }
+
         use VmError::*;
 
-        let stack = &mut self.stack;
-        let mut stack_idx = self.stack_idx;
         let mut opcodes = Cursor::new(program);
 
         while let Ok(opcode) = opcodes.read_u8() {
             let inst = try!(Inst::from_u8(opcode).ok_or(InvalidOpcode));
 
-            if stack_idx < inst.num_stack_args() as usize { return Err(StackUnderflow); }
-            if stack_idx as isize >= stack.len() as isize - inst.stack_effect() as isize {
+            if self.stack_idx < inst.num_stack_args() as usize { return Err(StackUnderflow); }
+            if self.stack_idx as isize >= self.stack.len() as isize - inst.stack_effect() as isize {
                 return Err(StackOverflow);
             }
 
@@ -106,7 +115,7 @@ impl Vm {
                 Inst::Nop => {},
 
                 Inst::Print => {
-                    let val = *try!(stack.get(stack_idx - 1).ok_or(StackUnderflow));
+                    let val = unsafe { *self.stack.get_unchecked(self.stack_idx - 1) };
                     println!("{}", val);
                 },
 
@@ -117,13 +126,14 @@ impl Vm {
                 Inst::Push => {
                     let val = try!(opcodes.read_i32::<LittleEndian>()
                                    .or(Err(UnexpectedProgramEnd)));
-                    let stack_top = try!(stack.get_mut(stack_idx).ok_or(StackOverflow));
+                    let stack_top = try!(self.stack.get_mut(self.stack_idx).ok_or(StackOverflow));
                     *stack_top = val;
                 },
 
                 Inst::Dup => {
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx) = *stack.get_unchecked(stack_idx - 1);
+                        *self.stack.get_unchecked_mut(self.stack_idx) =
+                            *self.stack.get_unchecked(self.stack_idx - 1);
                     }
                 },
 
@@ -131,95 +141,95 @@ impl Vm {
 
                 Inst::Swap => {
                     unsafe {
-                        let tmp = *stack.get_unchecked(stack_idx - 1);
-                        *stack.get_unchecked_mut(stack_idx - 1) =
-                            *stack.get_unchecked(stack_idx - 2);
-                        *stack.get_unchecked_mut(stack_idx - 2) = tmp;
+                        let tmp = *self.stack.get_unchecked(self.stack_idx - 1);
+                        *self.stack.get_unchecked_mut(self.stack_idx - 1) =
+                            *self.stack.get_unchecked(self.stack_idx - 2);
+                        *self.stack.get_unchecked_mut(self.stack_idx - 2) = tmp;
                     }
                 },
 
                 Inst::Add => {
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) +=
-                            *stack.get_unchecked(stack_idx - 1);
+                        *self.stack.get_unchecked_mut(self.stack_idx - 2) +=
+                            *self.stack.get_unchecked(self.stack_idx - 1);
                     }
                 },
 
                 Inst::Sub => {
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) -=
-                            *stack.get_unchecked(stack_idx - 1);
+                        *self.stack.get_unchecked_mut(self.stack_idx - 2) -=
+                            *self.stack.get_unchecked(self.stack_idx - 1);
                     }
                 },
 
                 Inst::Mul => {
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) *=
-                            *stack.get_unchecked(stack_idx - 1);
+                        *self.stack.get_unchecked_mut(self.stack_idx - 2) *=
+                            *self.stack.get_unchecked(self.stack_idx - 1);
                     }
                 },
 
                 Inst::Div => {
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) /=
-                            *stack.get_unchecked(stack_idx - 1);
+                        *self.stack.get_unchecked_mut(self.stack_idx - 2) /=
+                            *self.stack.get_unchecked(self.stack_idx - 1);
                     }
                 },
 
                 Inst::Mod => {
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx - 2) %=
-                            *stack.get_unchecked(stack_idx - 1);
+                        *self.stack.get_unchecked_mut(self.stack_idx - 2) %=
+                            *self.stack.get_unchecked(self.stack_idx - 1);
                     }
                 },
 
                 Inst::Eq => {
                     unsafe {
-                        let val1 = *stack.get_unchecked_mut(stack_idx - 1);
-                        let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
+                        let val1 = *self.stack.get_unchecked_mut(self.stack_idx - 1);
+                        let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 == val1) as i32;
                     }
                 },
 
                 Inst::Lt => {
                     unsafe {
-                        let val1 = *stack.get_unchecked_mut(stack_idx - 1);
-                        let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
+                        let val1 = *self.stack.get_unchecked_mut(self.stack_idx - 1);
+                        let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 < val1) as i32;
                     }
                 },
 
                 Inst::Lte => {
                     unsafe {
-                        let val1 = *stack.get_unchecked_mut(stack_idx - 1);
-                        let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
+                        let val1 = *self.stack.get_unchecked_mut(self.stack_idx - 1);
+                        let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 <= val1) as i32;
                     }
                 },
 
                 Inst::Gt => {
                     unsafe {
-                        let val1 = *stack.get_unchecked_mut(stack_idx - 1);
-                        let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
+                        let val1 = *self.stack.get_unchecked_mut(self.stack_idx - 1);
+                        let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 > val1) as i32;
                     }
                 },
 
                 Inst::Gte => {
                     unsafe {
-                        let val1 = *stack.get_unchecked_mut(stack_idx - 1);
-                        let ptr2 = stack.get_unchecked_mut(stack_idx - 2);
+                        let val1 = *self.stack.get_unchecked_mut(self.stack_idx - 1);
+                        let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 >= val1) as i32;
                     }
                 },
 
                 Inst::Jz => {
-                    let condition = unsafe { *stack.get_unchecked(stack_idx - 1) };
+                    let condition = unsafe { *self.stack.get_unchecked(self.stack_idx - 1) };
                     try!(jump(&mut opcodes, condition == 0));
                 },
 
                 Inst::Jnz => {
-                    let condition = unsafe { *stack.get_unchecked(stack_idx - 1) };
+                    let condition = unsafe { *self.stack.get_unchecked(self.stack_idx - 1) };
                     try!(jump(&mut opcodes, condition != 0));
                 },
 
@@ -248,7 +258,7 @@ impl Vm {
                     }
                     unsafe {
                         *self.control_stack.get_unchecked_mut(self.control_stack_idx) =
-                            *stack.get_unchecked(stack_idx - 1);
+                            *self.stack.get_unchecked(self.stack_idx - 1);
                     }
                     self.control_stack_idx += 1;
                 },
@@ -256,7 +266,7 @@ impl Vm {
                 Inst::CPop => {
                     if self.control_stack_idx < 1 { return Err(ControlStackUnderflow); }
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx) =
+                        *self.stack.get_unchecked_mut(self.stack_idx) =
                             *self.control_stack.get_unchecked(self.control_stack_idx - 1);
                     }
                     self.control_stack_idx -= 1;
@@ -265,27 +275,15 @@ impl Vm {
                 Inst::CDup => {
                     if self.control_stack_idx < 1 { return Err(ControlStackUnderflow); }
                     unsafe {
-                        *stack.get_unchecked_mut(stack_idx) =
+                        *self.stack.get_unchecked_mut(self.stack_idx) =
                             *self.control_stack.get_unchecked(self.control_stack_idx - 1);
                     }
                 },
             }
 
-            stack_idx = (stack_idx as isize + inst.stack_effect() as isize) as usize;
+            self.stack_idx = (self.stack_idx as isize + inst.stack_effect() as isize) as usize;
         }
 
-        #[inline(always)]
-        fn jump(opcodes: &mut Cursor<&[u8]>, condition: bool) -> Result<(), VmError> {
-            let delta = try!(opcodes.read_i32::<LittleEndian>().or(Err(UnexpectedProgramEnd)));
-            if condition {
-                let operand_size = std::mem::size_of::<i32>() as i64;
-                let addr = (opcodes.position() as i64 + delta as i64 - operand_size) as u64;
-                opcodes.set_position(addr);
-            }
-            Ok(())
-        }
-
-        self.stack_idx = stack_idx;
         Ok(())
     }
 }
