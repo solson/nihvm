@@ -112,32 +112,32 @@ impl Vm {
             }
 
             match inst {
-                Inst::Nop => {},
+                Inst::Nop => {}
 
                 Inst::Print => {
                     let val = unsafe { *self.stack.get_unchecked(self.stack_idx - 1) };
                     println!("{}", val);
-                },
+                }
 
                 Inst::Halt => {
                     break;
-                },
+                }
 
                 Inst::Push => {
                     let val = try!(opcodes.read_i32::<LittleEndian>()
                                    .or(Err(UnexpectedProgramEnd)));
                     let stack_top = try!(self.stack.get_mut(self.stack_idx).ok_or(StackOverflow));
                     *stack_top = val;
-                },
+                }
 
                 Inst::Dup => {
                     unsafe {
                         *self.stack.get_unchecked_mut(self.stack_idx) =
                             *self.stack.get_unchecked(self.stack_idx - 1);
                     }
-                },
+                }
 
-                Inst::Pop => {},
+                Inst::Pop => {}
 
                 Inst::Swap => {
                     unsafe {
@@ -146,42 +146,42 @@ impl Vm {
                             *self.stack.get_unchecked(self.stack_idx - 2);
                         *self.stack.get_unchecked_mut(self.stack_idx - 2) = tmp;
                     }
-                },
+                }
 
                 Inst::Add => {
                     unsafe {
                         *self.stack.get_unchecked_mut(self.stack_idx - 2) +=
                             *self.stack.get_unchecked(self.stack_idx - 1);
                     }
-                },
+                }
 
                 Inst::Sub => {
                     unsafe {
                         *self.stack.get_unchecked_mut(self.stack_idx - 2) -=
                             *self.stack.get_unchecked(self.stack_idx - 1);
                     }
-                },
+                }
 
                 Inst::Mul => {
                     unsafe {
                         *self.stack.get_unchecked_mut(self.stack_idx - 2) *=
                             *self.stack.get_unchecked(self.stack_idx - 1);
                     }
-                },
+                }
 
                 Inst::Div => {
                     unsafe {
                         *self.stack.get_unchecked_mut(self.stack_idx - 2) /=
                             *self.stack.get_unchecked(self.stack_idx - 1);
                     }
-                },
+                }
 
                 Inst::Mod => {
                     unsafe {
                         *self.stack.get_unchecked_mut(self.stack_idx - 2) %=
                             *self.stack.get_unchecked(self.stack_idx - 1);
                     }
-                },
+                }
 
                 Inst::Eq => {
                     unsafe {
@@ -189,7 +189,7 @@ impl Vm {
                         let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 == val1) as i32;
                     }
-                },
+                }
 
                 Inst::Lt => {
                     unsafe {
@@ -197,7 +197,7 @@ impl Vm {
                         let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 < val1) as i32;
                     }
-                },
+                }
 
                 Inst::Lte => {
                     unsafe {
@@ -205,7 +205,7 @@ impl Vm {
                         let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 <= val1) as i32;
                     }
-                },
+                }
 
                 Inst::Gt => {
                     unsafe {
@@ -213,7 +213,7 @@ impl Vm {
                         let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 > val1) as i32;
                     }
-                },
+                }
 
                 Inst::Gte => {
                     unsafe {
@@ -221,21 +221,21 @@ impl Vm {
                         let ptr2 = self.stack.get_unchecked_mut(self.stack_idx - 2);
                         *ptr2 = (*ptr2 >= val1) as i32;
                     }
-                },
+                }
 
                 Inst::Jz => {
                     let condition = unsafe { *self.stack.get_unchecked(self.stack_idx - 1) };
                     try!(jump(&mut opcodes, condition == 0));
-                },
+                }
 
                 Inst::Jnz => {
                     let condition = unsafe { *self.stack.get_unchecked(self.stack_idx - 1) };
                     try!(jump(&mut opcodes, condition != 0));
-                },
+                }
 
                 Inst::Jump => {
                     try!(jump(&mut opcodes, true));
-                },
+                }
 
                 Inst::Call => {
                     let control_stack_top = try!(self.control_stack.get_mut(self.control_stack_idx)
@@ -243,14 +243,14 @@ impl Vm {
                     *control_stack_top = opcodes.position() as i32 + 4;
                     try!(jump(&mut opcodes, true));
                     self.control_stack_idx += 1;
-                },
+                }
 
                 Inst::Ret => {
                     let addr = *try!(self.control_stack.get_mut(self.control_stack_idx - 1)
                                      .ok_or(ControlStackOverflow));
                     opcodes.set_position(addr as u64);
                     self.control_stack_idx -= 1;
-                },
+                }
 
                 Inst::CPush => {
                     if self.control_stack_idx >= self.control_stack.len() {
@@ -261,7 +261,7 @@ impl Vm {
                             *self.stack.get_unchecked(self.stack_idx - 1);
                     }
                     self.control_stack_idx += 1;
-                },
+                }
 
                 Inst::CPop => {
                     if self.control_stack_idx < 1 { return Err(ControlStackUnderflow); }
@@ -270,7 +270,7 @@ impl Vm {
                             *self.control_stack.get_unchecked(self.control_stack_idx - 1);
                     }
                     self.control_stack_idx -= 1;
-                },
+                }
 
                 Inst::CDup => {
                     if self.control_stack_idx < 1 { return Err(ControlStackUnderflow); }
@@ -278,7 +278,7 @@ impl Vm {
                         *self.stack.get_unchecked_mut(self.stack_idx) =
                             *self.control_stack.get_unchecked(self.control_stack_idx - 1);
                     }
-                },
+                }
             }
 
             self.stack_idx = (self.stack_idx as isize + inst.stack_effect() as isize) as usize;
