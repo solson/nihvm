@@ -3,8 +3,7 @@ use std::io::Cursor;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 macro_rules! define_instructions {
-    (variant, value, name, operands, stack_args, stack_effect
-     $($variant:ident,
+    ($($variant:ident,
        $value:expr,
        $name:expr,
        $num_operands:expr,
@@ -40,7 +39,7 @@ macro_rules! define_instructions {
 // Bytecode instruction opcodes. The values of these opcodes should never change, to remain
 // compatible with existing bytecode programs.
 define_instructions! {
-    variant, value, name,    operands, stack_args, stack_effect
+//  variant, value, name,    operands, stack_args, stack_effect
     Nop,     0,     "nop",   0,        0,           0
     Print,   1,     "print", 0,        1,          -1
     Halt,    2,     "halt",  0,        0,           0
