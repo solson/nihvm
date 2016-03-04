@@ -1,5 +1,6 @@
 extern crate byteorder;
 use std::io::Cursor;
+use std::str::FromStr;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 macro_rules! define_instructions {
@@ -14,24 +15,31 @@ macro_rules! define_instructions {
         #[repr(u8)]
         enum Inst { $($variant = $value),* }
 
-        impl Inst {
-            fn from_u8(inst: u8) -> Option<Inst> {
-                match inst {
-                    $($value => Some(Inst::$variant),)*
-                    _ => None
-                }
-            }
+        struct InvalidInstError;
 
-            fn from_str(inst: &str) -> Option<Inst> {
+        impl Inst {
+            fn from_u8(inst: u8) -> Result<Inst, InvalidInstError> {
                 match inst {
-                    $($name => Some(Inst::$variant),)*
-                    _ => None
+                    $($value => Ok(Inst::$variant),)*
+                    _ => Err(InvalidInstError),
                 }
             }
 
             fn num_operands(self)   -> u8 { match self { $(Inst::$variant => $num_operands),* } }
             fn num_stack_args(self) -> u8 { match self { $(Inst::$variant => $num_stack_args),* } }
             fn stack_effect(self)   -> i8 { match self { $(Inst::$variant => $stack_effect),* } }
+        }
+
+        impl FromStr for Inst {
+            type Err = InvalidInstError;
+
+            fn from_str(inst: &str) -> Result<Inst, InvalidInstError> {
+                match inst {
+                    $($name => Ok(Inst::$variant),)*
+                    _ => Err(InvalidInstError),
+                }
+            }
+
         }
     )
 }
@@ -85,9 +93,15 @@ struct Vm {
     control_stack_idx: usize,
 }
 
+impl From<InvalidInstError> for VmError {
+    fn from(_: InvalidInstError) -> Self {
+        VmError::InvalidOpcode
+    }
+}
+
 impl Vm {
     fn execute(&mut self, program: &[u8]) -> Result<(), VmError> {
-        #[inline(always)]
+        #[inline]
         fn jump(opcodes: &mut Cursor<&[u8]>, condition: bool) -> Result<(), VmError> {
             let delta = try!(opcodes.read_i32::<LittleEndian>().or(Err(UnexpectedProgramEnd)));
             if condition {
@@ -103,7 +117,7 @@ impl Vm {
         let mut opcodes = Cursor::new(program);
 
         while let Ok(opcode) = opcodes.read_u8() {
-            let inst = try!(Inst::from_u8(opcode).ok_or(InvalidOpcode));
+            let inst = try!(Inst::from_u8(opcode));
 
             if self.stack_idx < inst.num_stack_args() as usize { return Err(StackUnderflow); }
             if self.stack_idx as isize >= self.stack.len() as isize - inst.stack_effect() as isize {
@@ -111,7 +125,7 @@ impl Vm {
             }
 
             match inst {
-                Inst::Nop => {}
+                Inst::Nop | Inst::Pop => {}
 
                 Inst::Print => {
                     let val = unsafe { *self.stack.get_unchecked(self.stack_idx - 1) };
@@ -135,8 +149,6 @@ impl Vm {
                             *self.stack.get_unchecked(self.stack_idx - 1);
                     }
                 }
-
-                Inst::Pop => {}
 
                 Inst::Swap => {
                     unsafe {
@@ -312,7 +324,7 @@ fn assemble(source: &str) -> Vec<u8> {
         // Parse the rest of the line if it's not blank.
         if let Some(opcode) = first_token {
             // Parse the instruction name.
-            let inst = Inst::from_str(opcode).unwrap_or_else(|| {
+            let inst = Inst::from_str(opcode).unwrap_or_else(|_| {
                 panic!("Unrecognized instruction '{}'", opcode)
             });
             program.push(inst as u8);
@@ -323,7 +335,7 @@ fn assemble(source: &str) -> Vec<u8> {
                     panic!("Missing one or more operands after '{}'", opcode)
                 });
 
-                if operand.chars().next() == Some('@') {
+                if operand.starts_with('@') {
                     let label_name = &operand[1..];
                     label_uses.push((label_name, program.len()));
 

@@ -1,7 +1,7 @@
 [package]
+authors = ["Scott Olson <scott@scott-olson.org>"]
 name = "nihvm"
 version = "0.0.1"
-authors = ["Scott Olson <scott@scott-olson.org>"]
 
 [dependencies]
 byteorder = "0.3.7"
