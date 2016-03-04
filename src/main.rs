@@ -324,7 +324,7 @@ fn assemble(source: &str) -> Vec<u8> {
         // Parse the rest of the line if it's not blank.
         if let Some(opcode) = first_token {
             // Parse the instruction name.
-            let inst = Inst::from_str(opcode).unwrap_or_else(|_| {
+            let inst = opcode.parse::<Inst>().unwrap_or_else(|_| {
                 panic!("Unrecognized instruction '{}'", opcode)
             });
             program.push(inst as u8);
